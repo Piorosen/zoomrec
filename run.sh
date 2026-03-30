@@ -44,9 +44,6 @@ ZOOM_URL=https://zoom.us/j/1234567890?pwd=XXXXXX
 # Display name shown in Zoom
 DISPLAY_NAME=ZoomRec
 
-# Recording duration in minutes
-RECORD_DURATION=60
-
 # Timezone
 TZ=Asia/Seoul
 
@@ -97,7 +94,7 @@ cmd_start() {
     log "Starting zoomrec..."
     log "  URL: ${ZOOM_URL:-"(using MEETING_ID)"}"
     log "  Name: ${DISPLAY_NAME:-ZoomRec}"
-    log "  Duration: ${RECORD_DURATION:-60} min"
+    log "  Recording until meeting ends"
     log "  Timezone: ${TZ:-Asia/Seoul}"
 
     docker run -d --name "$CONTAINER_NAME" \

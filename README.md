@@ -46,7 +46,6 @@ docker run -d --name zoomrec \
   -e TZ=Asia/Seoul \
   -e ZOOM_URL="https://zoom.us/j/1234567890?pwd=XXXXXX" \
   -e DISPLAY_NAME="MyName" \
-  -e RECORD_DURATION=60 \
   -v $(pwd)/recordings:/home/zoomrec/recordings \
   -p 5901:5901 \
   zoomrec:latest
@@ -64,7 +63,6 @@ docker run -d --name zoomrec \
   -e MEETING_ID="1234567890" \
   -e MEETING_PWD="your_password" \
   -e DISPLAY_NAME="MyName" \
-  -e RECORD_DURATION=60 \
   -v $(pwd)/recordings:/home/zoomrec/recordings \
   -p 5901:5901 \
   zoomrec:latest
@@ -97,17 +95,16 @@ Variable | Description | Default | Example
 `MEETING_ID` | Meeting ID (alternative to URL) | - | `1234567890`
 `MEETING_PWD` | Meeting password | - | `abc123`
 `DISPLAY_NAME` | Name shown in Zoom | `ZoomRec` | `MyName`
-`RECORD_DURATION` | Recording duration in minutes | `60` | `30`
 `TZ` | Timezone | `Europe/Berlin` | `Asia/Seoul`
 `DEBUG` | Enable debug mode | `False` | `True`
 `TELEGRAM_BOT_TOKEN` | Telegram bot token for notifications | - | `123:ABC`
 `TELEGRAM_CHAT_ID` | Telegram chat ID for notifications | - | `-100123`
 `VNC_PW` | VNC password | `zoomrec` | `mypass`
-`VNC_RESOLUTION` | Display resolution | `1024x576` | `1920x1080`
+`VNC_RESOLUTION` | Display resolution | `1920x1080` | `2560x1440`
 
-> **Priority**: If `ZOOM_URL` or `MEETING_ID` is set, the meeting is joined immediately. Otherwise, the CSV schedule is used.
+> **Priority**: If `ZOOM_URL` or `MEETING_ID` is set, the meeting is joined immediately. Recording continues until the host ends the meeting, then the container exits automatically. Otherwise, the CSV schedule is used.
 
-> **URL Parsing**: `ZOOM_URL` supports both `https://zoom.us/j/ID?pwd=PWD` and `zoommtg://` formats. The meeting ID and password are extracted automatically.
+> **URL Parsing**: `ZOOM_URL` supports `https://zoom.us/j/ID?pwd=PWD` format. The meeting ID and password are extracted automatically.
 
 ---
 
