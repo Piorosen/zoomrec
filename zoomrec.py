@@ -168,8 +168,125 @@ def wait_for_zoom_process(timeout=60):
     return False
 
 
-def join(meet_id, meet_pw, duration, description):
-    """Join a Zoom meeting using zoommtg:// URL and record it."""
+def run_xdotool(cmd):
+    """Run an xdotool command."""
+    subprocess.run(
+        f"DISPLAY=:1 xdotool {cmd}",
+        shell=True, capture_output=True, timeout=5
+    )
+
+
+def hide_taskbar():
+    """Hide the Xfce panel (taskbar) so it doesn't appear in recordings."""
+    logging.info("Hiding Xfce taskbar...")
+    subprocess.run(
+        "DISPLAY=:1 xfce4-panel --quit",
+        shell=True, capture_output=True
+    )
+    time.sleep(1)
+
+
+def zoom_fullscreen():
+    """Force Zoom to fullscreen mode."""
+    logging.info("Setting Zoom to fullscreen...")
+    w, h = [int(x) for x in os.getenv('VNC_RESOLUTION', '1920x1080').split('x')]
+
+    # Find the main Zoom meeting window (largest one)
+    result = subprocess.run(
+        "DISPLAY=:1 xdotool search --name 'Zoom'",
+        shell=True, capture_output=True, text=True
+    )
+    windows = [wid for wid in result.stdout.strip().split('\n') if wid]
+
+    main_win = None
+    max_area = 0
+    for wid in windows:
+        try:
+            geom = subprocess.run(
+                f"DISPLAY=:1 xdotool getwindowgeometry --shell {wid}",
+                shell=True, capture_output=True, text=True, timeout=3
+            )
+            ww = hh = 0
+            for line in geom.stdout.strip().split('\n'):
+                if line.startswith('WIDTH='):
+                    ww = int(line.split('=')[1])
+                elif line.startswith('HEIGHT='):
+                    hh = int(line.split('=')[1])
+            if ww * hh > max_area:
+                max_area = ww * hh
+                main_win = wid
+        except Exception:
+            continue
+
+    if not main_win:
+        logging.warning("No Zoom window found for fullscreen")
+        return
+
+    logging.info("Main Zoom window: %s (area: %d)", main_win, max_area)
+
+    # Activate the window
+    run_xdotool(f"windowactivate --sync {main_win}")
+    time.sleep(0.5)
+
+    # Force window to cover entire screen (no decorations)
+    subprocess.run(
+        f"DISPLAY=:1 wmctrl -i -r {main_win} -b add,fullscreen 2>/dev/null || true",
+        shell=True, capture_output=True
+    )
+    time.sleep(0.5)
+
+    # Fallback: resize and move to cover screen
+    run_xdotool(f"windowsize {main_win} {w} {h}")
+    run_xdotool(f"windowmove {main_win} 0 0")
+    time.sleep(1)
+
+    # Double-click the meeting view to trigger Zoom's native fullscreen
+    run_xdotool(f"mousemove {w // 2} {h // 2}")
+    time.sleep(0.3)
+    run_xdotool(f"click --repeat 2 1")
+    time.sleep(2)
+
+
+def dismiss_dialogs():
+    """Dismiss 'AI Companion', 'transcribed' popups, and sidebar panels using mouse clicks."""
+    logging.info("Dismissing popups and cleaning up UI...")
+    w, h = [int(x) for x in os.getenv('VNC_RESOLUTION', '1920x1080').split('x')]
+
+    # Click OK on "This meeting is being transcribed" dialog
+    # The OK button is a blue button roughly center of screen
+    # Try multiple positions to hit it
+    ok_positions = [
+        (w // 2 + 30, h // 2 + 80),
+        (w // 2, h // 2 + 80),
+        (w // 2 - 30, h // 2 + 80),
+        (w // 2 + 30, h // 2 + 60),
+        (w // 2, h // 2 + 60),
+    ]
+    for x, y in ok_positions:
+        run_xdotool(f"mousemove {x} {y} click 1")
+        time.sleep(0.5)
+
+    time.sleep(2)
+
+    # Close AI Companion side panel if visible
+    # The X button to close it is at the top-right area of the panel
+    # Panel typically occupies the right ~300px
+    close_positions = [
+        (w - 20, 50),   # top-right corner X
+        (w - 30, 50),
+        (w - 310, 50),  # left edge of panel header
+    ]
+    for x, y in close_positions:
+        run_xdotool(f"mousemove {x} {y} click 1")
+        time.sleep(0.5)
+
+    time.sleep(1)
+
+
+def join(meet_id, meet_pw, duration, description, extra_time=300):
+    """Join a Zoom meeting using zoommtg:// URL and record it.
+    extra_time: buffer seconds added after duration (0 for ENV mode, 300 for CSV mode).
+    """
     global ONGOING_MEETING
     ffmpeg_debug = None
 
@@ -183,6 +300,9 @@ def join(meet_id, meet_pw, duration, description):
     # Exit any running Zoom
     exit_process_by_name("zoom")
     time.sleep(2)
+
+    # Hide Xfce taskbar before Zoom starts
+    hide_taskbar()
 
     # Build zoommtg URL and launch Zoom
     zoommtg_url = build_zoommtg_url(meet_id, meet_pw, DISPLAY_NAME)
@@ -204,6 +324,16 @@ def join(meet_id, meet_pw, duration, description):
 
     # Give Zoom time to connect (auto-join config skips preview)
     time.sleep(30)
+
+    # Dismiss popups (AI Companion, transcription, etc.)
+    dismiss_dialogs()
+
+    # Force Zoom into fullscreen
+    zoom_fullscreen()
+
+    # Dismiss any remaining popups after fullscreen
+    time.sleep(2)
+    dismiss_dialogs()
 
     start_date = datetime.now()
 
@@ -238,7 +368,7 @@ def join(meet_id, meet_pw, duration, description):
 
     send_telegram_message(f"Joined meeting '{description}' and started recording.")
 
-    end_date = start_date + timedelta(seconds=duration + 300)
+    end_date = start_date + timedelta(seconds=duration + extra_time)
 
     # Wait for meeting to end
     meeting_running = True
@@ -308,7 +438,7 @@ def join_from_env():
     logging.info("Joining meeting from ENV: ID=%s, Duration=%d min",
                  meet_id, ENV_RECORD_DURATION)
     join(meet_id=meet_id, meet_pw=meet_pwd,
-         duration=duration, description=description)
+         duration=duration, description=description, extra_time=0)
 
 
 def join_ongoing_meeting():

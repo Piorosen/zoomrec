@@ -5,7 +5,7 @@ ENV HOME=/home/zoomrec \
     TERM=xfce4-terminal \
     START_DIR=/start \
     DEBIAN_FRONTEND=noninteractive \
-    VNC_RESOLUTION=1024x576 \
+    VNC_RESOLUTION=1920x1080 \
     VNC_COL_DEPTH=24 \
     VNC_PW=zoomrec \
     VNC_PORT=5901 \
@@ -91,7 +91,8 @@ RUN apt-get update && \
         libatomic1 \
         libopengl0 \
         gnome-screenshot \
-        xdotool && \
+        xdotool \
+        wmctrl && \
 # Install latest Zoom
     wget -q -O zoom_amd64.deb https://zoom.us/client/latest/zoom_amd64.deb && \
     dpkg -i zoom_amd64.deb || true && \
