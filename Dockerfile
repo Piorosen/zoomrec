@@ -13,8 +13,7 @@ ENV HOME=/home/zoomrec \
     ZOOM_URL="" \
     MEETING_ID="" \
     MEETING_PWD="" \
-    DISPLAY_NAME="ZoomRec" \
-    RECORD_DURATION="60"
+    DISPLAY_NAME="ZoomRec"
 
 # Add user
 RUN useradd -ms /bin/bash zoomrec -d ${HOME}

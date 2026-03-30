@@ -46,13 +46,11 @@ TIME_FORMAT = "%Y-%m-%d_%H-%M-%S"
 CSV_DELIMITER = ';'
 
 ONGOING_MEETING = False
-VIDEO_PANEL_HIDED = False
 
 # ENV-based meeting config
 ZOOM_URL = os.getenv('ZOOM_URL', '')
 ENV_MEETING_ID = os.getenv('MEETING_ID', '')
 ENV_MEETING_PWD = os.getenv('MEETING_PWD', '')
-ENV_RECORD_DURATION = int(os.getenv('RECORD_DURATION', '60'))
 
 
 def parse_zoom_url(url):
@@ -114,8 +112,11 @@ class BackgroundThread:
     def run(self):
         global ONGOING_MEETING
         ONGOING_MEETING = True
-        logging.debug("Check continuously if meeting has ended..")
         while ONGOING_MEETING:
+            if len(find_process_id_by_name('zoom')) == 0:
+                logging.info("Zoom process gone - meeting ended by host.")
+                ONGOING_MEETING = False
+                break
             time.sleep(self.interval)
 
 
@@ -217,22 +218,23 @@ def dismiss_dialogs():
     # From debug: OK button is at approximately x=680-760, y=385-405 in the
     # Meeting window (which is now fullscreen, so these are screen coordinates)
     # Sweep a small area around the expected OK button position
-    for x in range(670, 770, 8):
-        for y in range(380, 415, 5):
+    run_xdotool("mousemove 720 400 click 1")
+    time.sleep(0.5)
+    # Fallback sweep with fewer samples
+    for x in range(680, 760, 20):
+        for y in range(385, 410, 10):
             run_xdotool(f"mousemove {x} {y} click 1")
-            time.sleep(0.02)
+            time.sleep(0.1)
     time.sleep(1)
 
 
-def join(meet_id, meet_pw, duration, description, extra_time=300, original_url=''):
+def join(meet_id, meet_pw, description, original_url=''):
     """Join a Zoom meeting and record it.
     original_url: if provided, use this URL directly instead of building one.
     """
     global ONGOING_MEETING
-    ffmpeg_debug = None
 
-    logging.info("Join meeting: %s (ID: %s, duration: %ds)",
-                 description, meet_id, duration)
+    logging.info("Join meeting: %s (ID: %s)", description, meet_id)
 
     if DEBUG:
         if not os.path.exists(DEBUG_PATH):
@@ -253,8 +255,7 @@ def join(meet_id, meet_pw, duration, description, extra_time=300, original_url='
     os.chmod(launcher, 0o755)
     subprocess.Popen(
         [launcher],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
 
     if not wait_for_zoom_process(timeout=30):
@@ -310,7 +311,7 @@ def join(meet_id, meet_pw, duration, description, extra_time=300, original_url='
         f"-f x11grab -r 30 -s {width}x{height} -i {disp} "
         f"-vf crop={width}:{crop_h}:0:{crop_top} "
         f"-acodec aac -b:a 128k -vcodec libx264 "
-        f"-preset ultrafast -crf 23 -pix_fmt yuv420p -threads 0 "
+        f"-preset ultrafast -crf 18 -pix_fmt yuv420p -threads 0 "
         f"-async 1 -vsync 1 {filename}"
     )
 
@@ -322,16 +323,10 @@ def join(meet_id, meet_pw, duration, description, extra_time=300, original_url='
 
     send_telegram_message(f"Joined meeting '{description}' and started recording.")
 
-    end_date = start_date + timedelta(seconds=duration + extra_time)
-
-    # Wait for meeting to end
-    meeting_running = True
-    while meeting_running:
-        time_remaining = end_date - datetime.now()
-        if time_remaining.total_seconds() < 0 or not ONGOING_MEETING:
-            meeting_running = False
-        else:
-            print(f"Meeting ends in {time_remaining}", end="\r", flush=True)
+    # Wait until Zoom meeting ends (host ends or you get kicked)
+    while ONGOING_MEETING:
+        elapsed = datetime.now() - start_date
+        print(f"Recording... {elapsed}", end="\r", flush=True)
         time.sleep(5)
 
     logging.info("Meeting ended at %s", datetime.now())
@@ -384,17 +379,23 @@ def join_from_env():
         logging.info("No ZOOM_URL or MEETING_ID provided via ENV, skipping ENV join.")
         return
 
-    duration = ENV_RECORD_DURATION * 60  # convert minutes to seconds
     description = "ENV_Meeting_" + meet_id
-
-    # Pass original URL for direct use (preserves regional subdomain)
     orig_url = ZOOM_URL if ZOOM_URL and ZOOM_URL.startswith('http') else ''
 
-    logging.info("Joining meeting from ENV: ID=%s, Duration=%d min",
-                 meet_id, ENV_RECORD_DURATION)
+    logging.info("Joining meeting from ENV: ID=%s", meet_id)
     join(meet_id=meet_id, meet_pw=meet_pwd,
-         duration=duration, description=description,
-         extra_time=0, original_url=orig_url)
+         description=description, original_url=orig_url)
+
+
+def extract_meeting_details(row):
+    """Extract meeting ID and password from a CSV row, parsing URL if needed."""
+    mid = row["id"]
+    mpw = row["password"]
+    if mid.startswith('http://') or mid.startswith('https://'):
+        mid, mpw_parsed = parse_zoom_url(mid)
+        if not mpw:
+            mpw = mpw_parsed
+    return mid, mpw
 
 
 def join_ongoing_meeting():
@@ -419,36 +420,15 @@ def join_ongoing_meeting():
                     timedelta(seconds=int(row["duration"]) * 60 + 300)
                 end_time = end_date.time()
 
-                recent_duration = (end_date - curr_date).total_seconds()
+                # Check if meeting is currently running (handles midnight crossing)
+                in_window = (start_time <= curr_time <= end_time) if start_time < end_time \
+                    else (curr_time >= start_time or curr_time <= end_time)
 
-                if start_time < end_time:
-                    if start_time <= curr_time <= end_time and str(row["record"]) == 'true':
-                        logging.info("Join meeting that is currently running..")
-
-                        # Parse URL if id field is a URL
-                        mid = row["id"]
-                        mpw = row["password"]
-                        if mid.startswith('http://') or mid.startswith('https://'):
-                            mid, mpw_parsed = parse_zoom_url(mid)
-                            if not mpw:
-                                mpw = mpw_parsed
-
-                        join(meet_id=mid, meet_pw=mpw,
-                             duration=recent_duration,
-                             description=row["description"])
-                else:
-                    if curr_time >= start_time or curr_time <= end_time and str(row["record"]) == 'true':
-                        logging.info("Join meeting that is currently running..")
-                        mid = row["id"]
-                        mpw = row["password"]
-                        if mid.startswith('http://') or mid.startswith('https://'):
-                            mid, mpw_parsed = parse_zoom_url(mid)
-                            if not mpw:
-                                mpw = mpw_parsed
-
-                        join(meet_id=mid, meet_pw=mpw,
-                             duration=recent_duration,
-                             description=row["description"])
+                if in_window and str(row["record"]) == 'true':
+                    logging.info("Join meeting that is currently running..")
+                    mid, mpw = extract_meeting_details(row)
+                    join(meet_id=mid, meet_pw=mpw,
+                         description=row["description"])
 
 
 def setup_schedule():
@@ -461,24 +441,16 @@ def setup_schedule():
         line_count = 0
         for row in csv_reader:
             if str(row["record"]) == 'true':
-                # Parse URL if id field is a URL
-                mid = row["id"]
-                mpw = row["password"]
-                if mid.startswith('http://') or mid.startswith('https://'):
-                    mid, mpw_parsed = parse_zoom_url(mid)
-                    if not mpw:
-                        mpw = mpw_parsed
+                mid, mpw = extract_meeting_details(row)
 
                 sched_time = (datetime.strptime(row["time"], '%H:%M') -
                               timedelta(minutes=1)).strftime('%H:%M')
-                dur = int(row["duration"]) * 60
 
                 cmd_string = (
                     f'schedule.every().{row["weekday"]}'
                     f'.at("{sched_time}")'
                     f'.do(join, meet_id="{mid}"'
                     f', meet_pw="{mpw}"'
-                    f', duration={dur}'
                     f', description="{row["description"]}")'
                 )
 
@@ -496,25 +468,26 @@ def main():
         logging.error("Failed to create screenshot folder!")
         raise
 
-    # Priority 1: ENV-based meeting (immediate join)
+    # Priority 1: ENV-based meeting (immediate join, then exit)
     if ZOOM_URL or ENV_MEETING_ID:
         join_from_env()
+        logging.info("Recording complete. Exiting.")
         return
 
     # Priority 2: CSV-based schedule
     setup_schedule()
     join_ongoing_meeting()
 
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+        next_run = schedule.next_run()
+        if next_run:
+            remaining = next_run - datetime.now()
+            print(f"Next meeting in {remaining}", end="\r", flush=True)
+        else:
+            print("No scheduled meetings. Waiting...", end="\r", flush=True)
+
 
 if __name__ == '__main__':
     main()
-
-while True:
-    schedule.run_pending()
-    time.sleep(1)
-    next_run = schedule.next_run()
-    if next_run:
-        remaining = next_run - datetime.now()
-        print(f"Next meeting in {remaining}", end="\r", flush=True)
-    else:
-        print("No scheduled meetings. Waiting...", end="\r", flush=True)
