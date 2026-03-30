@@ -51,6 +51,11 @@ pactl load-module module-remap-source master=microphone.monitor source_name=micr
 # Set microphone Volume
 pactl set-source-volume 3 60%
 
+# Update Zoom display name in config if DISPLAY_NAME is set
+if [[ -n "$DISPLAY_NAME" ]]; then
+    sed -i "s/^displayname=.*/displayname=${DISPLAY_NAME}/" "$HOME/.config/zoomus.conf"
+fi
+
 echo -e "\nStart script.."
 sleep 5
 

@@ -9,7 +9,12 @@ ENV HOME=/home/zoomrec \
     VNC_COL_DEPTH=24 \
     VNC_PW=zoomrec \
     VNC_PORT=5901 \
-    DISPLAY=:1
+    DISPLAY=:1 \
+    ZOOM_URL="" \
+    MEETING_ID="" \
+    MEETING_PWD="" \
+    DISPLAY_NAME="ZoomRec" \
+    RECORD_DURATION="60"
 
 # Add user
 RUN useradd -ms /bin/bash zoomrec -d ${HOME}
@@ -61,7 +66,7 @@ RUN apt-get update && \
         xauth \
         x11-xserver-utils \
         libxkbcommon-x11-0 && \
-# Install Zoom dependencies
+# Install Zoom dependencies (including Zoom v7 deps)
     apt-get install --no-install-recommends -y \
         libxcb-xinerama0 \
         libglib2.0-0 \
@@ -81,10 +86,15 @@ RUN apt-get update && \
         libxslt1.1 \
         libsqlite3-0 \
         libxcb-keysyms1 \
-        libxcb-xtest0 && \
-# Install Zoom
-    wget -q -O zoom_amd64.deb https://cdn.zoom.us/prod/5.13.4.711/zoom_amd64.deb && \
-    dpkg -i zoom_amd64.deb && \
+        libxcb-xtest0 \
+        libxcb-cursor0 \
+        libatomic1 \
+        libopengl0 \
+        gnome-screenshot \
+        xdotool && \
+# Install latest Zoom
+    wget -q -O zoom_amd64.deb https://zoom.us/client/latest/zoom_amd64.deb && \
+    dpkg -i zoom_amd64.deb || true && \
     apt-get -f install -y && \
     rm -rf zoom_amd64.deb && \
 # Install FFmpeg

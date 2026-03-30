@@ -127,3 +127,14 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Recordings and debug screenshots
+recordings/
+screen_debug.png
+
+# Test artifacts
+test_build/
+test_meetings/
+
+# Claude Code
+CLAUDE.md
