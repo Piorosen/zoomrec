@@ -197,99 +197,30 @@ def hide_taskbar():
 
 
 def zoom_fullscreen():
-    """Force Zoom to fullscreen mode."""
+    """Make the Zoom Meeting window fullscreen using wmctrl."""
     logging.info("Setting Zoom to fullscreen...")
-    w, h = [int(x) for x in os.getenv('VNC_RESOLUTION', '1920x1080').split('x')]
 
-    # Find the main Zoom meeting window (largest one)
-    result = subprocess.run(
-        "DISPLAY=:1 xdotool search --name 'Zoom'",
-        shell=True, capture_output=True, text=True
-    )
-    windows = [wid for wid in result.stdout.strip().split('\n') if wid]
-
-    main_win = None
-    max_area = 0
-    for wid in windows:
-        try:
-            geom = subprocess.run(
-                f"DISPLAY=:1 xdotool getwindowgeometry --shell {wid}",
-                shell=True, capture_output=True, text=True, timeout=3
-            )
-            ww = hh = 0
-            for line in geom.stdout.strip().split('\n'):
-                if line.startswith('WIDTH='):
-                    ww = int(line.split('=')[1])
-                elif line.startswith('HEIGHT='):
-                    hh = int(line.split('=')[1])
-            if ww * hh > max_area:
-                max_area = ww * hh
-                main_win = wid
-        except Exception:
-            continue
-
-    if not main_win:
-        logging.warning("No Zoom window found for fullscreen")
-        return
-
-    logging.info("Main Zoom window: %s (area: %d)", main_win, max_area)
-
-    # Activate the window
-    run_xdotool(f"windowactivate --sync {main_win}")
-    time.sleep(0.5)
-
-    # Force window to cover entire screen (no decorations)
+    # Use wmctrl to find and fullscreen the "Meeting" window
     subprocess.run(
-        f"DISPLAY=:1 wmctrl -i -r {main_win} -b add,fullscreen 2>/dev/null || true",
+        "DISPLAY=:1 wmctrl -r Meeting -b add,fullscreen 2>/dev/null",
         shell=True, capture_output=True
     )
-    time.sleep(0.5)
-
-    # Fallback: resize and move to cover screen
-    run_xdotool(f"windowsize {main_win} {w} {h}")
-    run_xdotool(f"windowmove {main_win} 0 0")
-    time.sleep(1)
-
-    # Double-click the meeting view to trigger Zoom's native fullscreen
-    run_xdotool(f"mousemove {w // 2} {h // 2}")
-    time.sleep(0.3)
-    run_xdotool(f"click --repeat 2 1")
     time.sleep(2)
 
 
 def dismiss_dialogs():
-    """Dismiss 'AI Companion', 'transcribed' popups, and sidebar panels using mouse clicks."""
-    logging.info("Dismissing popups and cleaning up UI...")
-    w, h = [int(x) for x in os.getenv('VNC_RESOLUTION', '1920x1080').split('x')]
+    """Dismiss 'transcribed/AI Companion' OK dialog with targeted click sweep."""
+    logging.info("Dismissing popups...")
 
-    # Click OK on "This meeting is being transcribed" dialog
-    # The OK button is a blue button roughly center of screen
-    # Try multiple positions to hit it
-    ok_positions = [
-        (w // 2 + 30, h // 2 + 80),
-        (w // 2, h // 2 + 80),
-        (w // 2 - 30, h // 2 + 80),
-        (w // 2 + 30, h // 2 + 60),
-        (w // 2, h // 2 + 60),
-    ]
-    for x, y in ok_positions:
-        run_xdotool(f"mousemove {x} {y} click 1")
-        time.sleep(0.5)
-
-    time.sleep(2)
-
-    # Close AI Companion side panel if visible
-    # The X button to close it is at the top-right area of the panel
-    # Panel typically occupies the right ~300px
-    close_positions = [
-        (w - 20, 50),   # top-right corner X
-        (w - 30, 50),
-        (w - 310, 50),  # left edge of panel header
-    ]
-    for x, y in close_positions:
-        run_xdotool(f"mousemove {x} {y} click 1")
-        time.sleep(0.5)
-
+    # After wmctrl fullscreen, the Meeting window is 1920x1080
+    # The "This meeting is being transcribed" dialog has a blue OK button
+    # From debug: OK button is at approximately x=680-760, y=385-405 in the
+    # Meeting window (which is now fullscreen, so these are screen coordinates)
+    # Sweep a small area around the expected OK button position
+    for x in range(670, 770, 8):
+        for y in range(380, 415, 5):
+            run_xdotool(f"mousemove {x} {y} click 1")
+            time.sleep(0.02)
     time.sleep(1)
 
 
@@ -313,9 +244,18 @@ def join(meet_id, meet_pw, duration, description, extra_time=300, original_url='
     zoom_url = original_url if original_url else build_zoom_https_url(meet_id, meet_pw)
     logging.info("Zoom URL: %s", zoom_url)
 
-    # Launch Zoom with URL using setsid (new session required for Zoom v7)
+    # Launch Zoom with URL in a completely independent process
+    # Zoom v7 requires a new session (setsid) and shell execution to handle URL
     logging.info("Launching Zoom with URL...")
-    os.system(f'DISPLAY=:1 setsid zoom "--url={zoom_url}" &')
+    launcher = os.path.join(BASE_PATH, '.zoom_launch.sh')
+    with open(launcher, 'w') as f:
+        f.write(f'#!/bin/bash\nexport DISPLAY=:1\nexec setsid zoom "--url={zoom_url}"\n')
+    os.chmod(launcher, 0o755)
+    subprocess.Popen(
+        [launcher],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True
+    )
 
     if not wait_for_zoom_process(timeout=30):
         logging.error("Zoom did not start!")
@@ -334,12 +274,12 @@ def join(meet_id, meet_pw, duration, description, extra_time=300, original_url='
     logging.info("Waiting for meeting connection...")
     time.sleep(25)
 
+    # Fullscreen first, then dismiss OK dialog
     zoom_fullscreen()
-    time.sleep(2)
     dismiss_dialogs()
-    time.sleep(2)
-    dismiss_dialogs()
-    run_xdotool("mousemove 0 0")
+
+    # Move mouse to bottom-left corner to hide Zoom overlay toolbars
+    run_xdotool("mousemove 0 1079")
     time.sleep(3)
 
     start_date = datetime.now()
