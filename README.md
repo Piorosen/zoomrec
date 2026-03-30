@@ -1,5 +1,5 @@
 <h1 align="center">
-    zoomrec	
+    zoomrec
 </h1>
 
 <h4 align="center">
@@ -19,73 +19,120 @@
 
 ---
 
-## Meeting Recording API
-If you’re looking for a hosted Meeting Recording API, consider checking out [Recall.ai](https://www.recall.ai/?utm_source=github&utm_medium=sponsorship&utm_campaign=kastldratza-zoomrec), an API that works with Zoom, Google Meet, Microsoft Teams, In-person meetings, and more.
-
----
-
+- **Zoom v7** - _Latest Zoom client with automatic meeting join_
 - **Python3** - _Script to automatically join Zoom meetings and control FFmpeg_
-- **FFmpeg** - _Triggered by python script to start/stop screen recording_
+- **FFmpeg** - _H.264/AAC MP4 recording_
 - **Docker** - _Headless VNC Container based on Ubuntu 20.04 with Xfce window manager and TigerVNC_
 - **Telegram** - _Get notified about your recordings_
 
 ---
 
-Join with ID and Passcode           |  Join with URL
-:-------------------------:|:-------------------------:
-![](doc/demo/join-meeting-id.gif)  |  ![](doc/demo/join-meeting-url.gif)
+## Quick Start
+
+### Build
+
+```bash
+docker build --platform linux/amd64 -t zoomrec:latest .
+```
+
+### Join & Record with URL (simplest)
+
+```bash
+docker run -d --name zoomrec \
+  --platform linux/amd64 \
+  --security-opt seccomp=unconfined \
+  --cap-add SYS_ADMIN \
+  --cap-add NET_ADMIN \
+  -e TZ=Asia/Seoul \
+  -e ZOOM_URL="https://zoom.us/j/1234567890?pwd=XXXXXX" \
+  -e DISPLAY_NAME="MyName" \
+  -e RECORD_DURATION=60 \
+  -v $(pwd)/recordings:/home/zoomrec/recordings \
+  -p 5901:5901 \
+  zoomrec:latest
+```
+
+### Join & Record with Meeting ID + Password
+
+```bash
+docker run -d --name zoomrec \
+  --platform linux/amd64 \
+  --security-opt seccomp=unconfined \
+  --cap-add SYS_ADMIN \
+  --cap-add NET_ADMIN \
+  -e TZ=Asia/Seoul \
+  -e MEETING_ID="1234567890" \
+  -e MEETING_PWD="your_password" \
+  -e DISPLAY_NAME="MyName" \
+  -e RECORD_DURATION=60 \
+  -v $(pwd)/recordings:/home/zoomrec/recordings \
+  -p 5901:5901 \
+  zoomrec:latest
+```
+
+### Schedule with CSV (original method)
+
+```bash
+docker run -d --name zoomrec \
+  --platform linux/amd64 \
+  --security-opt seccomp=unconfined \
+  --cap-add SYS_ADMIN \
+  --cap-add NET_ADMIN \
+  -e TZ=Asia/Seoul \
+  -e DISPLAY_NAME="MyName" \
+  -v $(pwd)/recordings:/home/zoomrec/recordings \
+  -v $(pwd)/example/meetings.csv:/home/zoomrec/meetings.csv:ro \
+  -v $(pwd)/example/audio:/home/zoomrec/audio:ro \
+  -p 5901:5901 \
+  zoomrec:latest
+```
 
 ---
 
-## Installation
+## Environment Variables
 
-The entire mechanism runs in a Docker container. So all you need to do is install Docker and use the image from
-Registry.
+Variable | Description | Default | Example
+-------- | -------- | -------- | --------
+`ZOOM_URL` | Full Zoom meeting URL (auto-parsed) | - | `https://zoom.us/j/123?pwd=XXX`
+`MEETING_ID` | Meeting ID (alternative to URL) | - | `1234567890`
+`MEETING_PWD` | Meeting password | - | `abc123`
+`DISPLAY_NAME` | Name shown in Zoom | `ZoomRec` | `MyName`
+`RECORD_DURATION` | Recording duration in minutes | `60` | `30`
+`TZ` | Timezone | `Europe/Berlin` | `Asia/Seoul`
+`DEBUG` | Enable debug mode | `False` | `True`
+`TELEGRAM_BOT_TOKEN` | Telegram bot token for notifications | - | `123:ABC`
+`TELEGRAM_CHAT_ID` | Telegram chat ID for notifications | - | `-100123`
+`VNC_PW` | VNC password | `zoomrec` | `mypass`
+`VNC_RESOLUTION` | Display resolution | `1024x576` | `1920x1080`
 
-### Requirements
+> **Priority**: If `ZOOM_URL` or `MEETING_ID` is set, the meeting is joined immediately. Otherwise, the CSV schedule is used.
 
-- Docker - [https://docs.docker.com/get-docker/]()
-
-### Docker Registry
-
-Docker images are build and pushed automatically to [**Docker
-Hub**](https://hub.docker.com/repository/docker/kastldratza/zoomrec) and [**GitHub Container
-Registry**](https://github.com/kastldratza/zoomrec/pkgs/container/zoomrec).
-
-So you can choose and use one of them:
-
-- ```ghcr.io/kastldratza/zoomrec:master```
-- ```kastldratza/zoomrec:latest```
-
-*For my examples in this README I used* ```kastldratza/zoomrec:latest```
+> **URL Parsing**: `ZOOM_URL` supports both `https://zoom.us/j/ID?pwd=PWD` and `zoommtg://` formats. The meeting ID and password are extracted automatically.
 
 ---
 
-## Usage
+## Docker Run Options (Required)
 
-- Container saves recordings at **/home/zoomrec/recordings**
-- The current directory is used to mount **recordings**-Folder, but can be changed if needed
-    - Please check use of paths on different operating systems!
-    - Please check permissions for used directory!
-- Container stops when Python script is terminated
-- Zoomrec uses a CSV file with entries of Zoom meetings to record them
-    - The csv can be passed as seen below (mount as volume or add to docker image)
-- To "say" something after joining a meeting:
-    - ***paplay*** (*pulseaudio-utils*) is used to play a sound to a specified microphone output, which is mapped to a
-      microphone input at startup.
-    - ***paplay*** is triggered and plays a random file from **/home/zoomrec/audio**
-    - Nothing will be played if directory:
-        - does not contain **.wav** files
-        - is not mounted properly
+Zoom v7 requires additional Docker permissions to function properly:
 
-### CSV structure
+```
+--platform linux/amd64          # Required on Apple Silicon (ARM)
+--security-opt seccomp=unconfined   # Zoom namespace permissions
+--cap-add SYS_ADMIN             # Zoom process isolation
+--cap-add NET_ADMIN             # Zoom network access
+```
 
-CSV must be formatted as in example/meetings.csv
+---
 
-- Delimiter must be a semicolon "**;**"
-- Only meetings with flag "**record = true**" are joined and recorded
-- "**description**" is used for filename when recording
-- "**duration**" in minutes (+5 minutes to the end)
+## CSV Schedule
+
+CSV must be formatted as in `example/meetings.csv`
+
+- Delimiter: semicolon "**;**"
+- Only meetings with "**record = true**" are joined and recorded
+- "**description**" is used for the recording filename
+- "**duration**" in minutes (+5 minutes buffer added)
+- "**id**" can be a numeric meeting ID or a full Zoom URL
 
 weekday | time | duration | id | password | description | record
 -------- | -------- | -------- | -------- | -------- | -------- | --------
@@ -93,204 +140,102 @@ monday | 09:55 | 60 | 111111111111 | 741699 | Important_Meeting | true
 monday | 14:00 | 90 | 222222222222 | 321523 | Unimportant_Meeting | false
 tuesday| 17:00 | 90 | https://zoom.us/j/123456789?pwd=abc || Meeting_with_URL | true
 
-### VNC
+---
 
-You can connect to zoomrec via vnc and see what is happening.
+## Recording
 
-#### Connect (default)
-
-Hostname | Port | Password
--------- | -------- | --------
-localhost   | 5901   | zoomrec
-
-### Telegram
-Zoomrec can notify you via Telegram about starting and ending a recording or if joining a meeting failed. All you need is a bot token and a chat id of a Telegram channel.
-
-At first [create a new telegram bot](https://core.telegram.org/bots#6-botfather) to get the bot token. After that create a new channel and add the bot with sufficient permissions to write messages in that channel. Finally [get the chat id of your channel](https://gist.github.com/mraaroncruz/e76d19f7d61d59419002db54030ebe35) and look below how to pass your Telegram details to Zoomrec.
+- Recordings are saved as **MP4** (H.264 video + AAC audio) at `/home/zoomrec/recordings`
+- Filename format: `YYYY-MM-DD_HH-MM-SS-Description.mp4`
+- Mount the recordings volume to access files on the host:
+  ```
+  -v $(pwd)/recordings:/home/zoomrec/recordings
+  ```
 
 ### Preparation
 
-To have access to the recordings, a volume is mounted, so you need to create a folder that container users can access.
-
-**[ IMPORTANT ]**
-
-#### Create folders and set permissions (on Host)
-
-```
-mkdir -p recordings/screenshots
+```bash
+mkdir -p recordings
 chown -R 1000:1000 recordings
-
-mkdir -p audio
-chown -R 1000:1000 audio
 ```
 
-### Flags
+---
 
-#### Set timezone (default: Europe/Berlin)
+## VNC
 
-```
-docker run -d --restart unless-stopped \
-  -e TZ=Europe/Berlin \
-  -v $(pwd)/recordings:/home/zoomrec/recordings \
-  -v $(pwd)/example/audio:/home/zoomrec/audio \
-  -v $(pwd)/example/meetings.csv:/home/zoomrec/meetings.csv:ro \
-  -p 5901:5901 \
-  --security-opt seccomp:unconfined \
-kastldratza/zoomrec:latest
-```
+Connect to zoomrec via VNC to see what is happening.
 
-#### Set debugging flag (default: False)
+Hostname | Port | Password
+-------- | -------- | --------
+localhost | 5901 | zoomrec
 
-- screenshot on error
-- record joining
-- do not exit container on error
+---
 
-```
-docker run -d --restart unless-stopped \
-  -e DEBUG=True \
-  -v $(pwd)/recordings:/home/zoomrec/recordings \
-  -v $(pwd)/example/audio:/home/zoomrec/audio \
-  -v $(pwd)/example/meetings.csv:/home/zoomrec/meetings.csv:ro \
-  -p 5901:5901 \
-  --security-opt seccomp:unconfined \
-kastldratza/zoomrec:latest
-```
-#### Set Telegram details
-```
-docker run -d --restart unless-stopped \
+## Telegram Notifications
+
+Zoomrec can notify you via Telegram when recordings start/end or if joining fails.
+
+1. [Create a new Telegram bot](https://core.telegram.org/bots#6-botfather) to get the bot token
+2. Create a channel, add the bot with write permissions
+3. [Get the chat ID](https://gist.github.com/mraaroncruz/e76d19f7d61d59419002db54030ebe35)
+
+```bash
+docker run -d --name zoomrec \
+  --platform linux/amd64 \
+  --security-opt seccomp=unconfined \
+  --cap-add SYS_ADMIN --cap-add NET_ADMIN \
   -e TELEGRAM_BOT_TOKEN="YOUR_BOT_TOKEN" \
   -e TELEGRAM_CHAT_ID="-100_YOUR_CHAT_ID" \
+  -e ZOOM_URL="https://zoom.us/j/123?pwd=XXX" \
   -v $(pwd)/recordings:/home/zoomrec/recordings \
-  -v $(pwd)/example/audio:/home/zoomrec/audio \
-  -v $(pwd)/example/meetings.csv:/home/zoomrec/meetings.csv:ro \
   -p 5901:5901 \
-  --security-opt seccomp:unconfined \
-kastldratza/zoomrec:latest
-```
-#### Set Zoom display name 
-```
-docker run -d --restart unless-stopped \
-  -e DISPLAY_NAME="zoomrec" \
-  -v $(pwd)/recordings:/home/zoomrec/recordings \
-  -v $(pwd)/example/audio:/home/zoomrec/audio \
-  -v $(pwd)/example/meetings.csv:/home/zoomrec/meetings.csv:ro \
-  -p 5901:5901 \
-  --security-opt seccomp:unconfined \
-kastldratza/zoomrec:latest
-```
-### Windows / _cmd_
-
-```cmd
-docker run -d --restart unless-stopped \
-  -v %cd%\recordings:/home/zoomrec/recordings \
-  -v %cd%\example\audio:/home/zoomrec/audio \
-  -v %cd%\example\meetings.csv:/home/zoomrec/meetings.csv:ro \
-  -p 5901:5901 \
-  --security-opt seccomp:unconfined \
-kastldratza/zoomrec:latest
+  zoomrec:latest
 ```
 
-### Windows / _PowerShell_
+---
 
-```powershell
-docker run -d --restart unless-stopped `
-  -v ${PWD}/recordings:/home/zoomrec/recordings `
-  -v ${PWD}/example/audio:/home/zoomrec/audio `
-  -v ${PWD}/example/meetings.csv:/home/zoomrec/meetings.csv:ro `
-  -p 5901:5901 `
-  --security-opt seccomp:unconfined `
-kastldratza/zoomrec:latest
-```
+## Platform-specific Examples
 
 ### Linux / macOS
 
 ```bash
-docker run -d --restart unless-stopped \
+docker run -d --name zoomrec \
+  --platform linux/amd64 \
+  --security-opt seccomp=unconfined \
+  --cap-add SYS_ADMIN --cap-add NET_ADMIN \
+  -e TZ=Asia/Seoul \
+  -e ZOOM_URL="https://zoom.us/j/123?pwd=XXX" \
   -v $(pwd)/recordings:/home/zoomrec/recordings \
-  -v $(pwd)/example/audio:/home/zoomrec/audio \
-  -v $(pwd)/example/meetings.csv:/home/zoomrec/meetings.csv:ro \
   -p 5901:5901 \
-  --security-opt seccomp:unconfined \
-kastldratza/zoomrec:latest
+  zoomrec:latest
 ```
 
-## Customization example
+### Windows / PowerShell
 
-### Add meetings.csv to image
-
-```bash
-# Switch to example directory
-cd example
-
-# Build new image by customized Dockerfile
-docker build -t kastldratza/zoomrec-custom:latest .
-
-# Run image without mounting meetings.csv and audio directory
-# Linux
-docker run -d --restart unless-stopped -v $(pwd)/recordings:/home/zoomrec/recordings -p 5901:5901 --security-opt seccomp:unconfined kastldratza/zoomrec-custom:latest
-
-# Windows / PowerShell
-docker run -d --restart unless-stopped -v ${PWD}/recordings:/home/zoomrec/recordings -p 5901:5901 --security-opt seccomp:unconfined kastldratza/zoomrec-custom:latest
-
-# Windows / cmd
-docker run -d --restart unless-stopped -v %cd%\recordings:/home/zoomrec/recordings -p 5901:5901 --security-opt seccomp:unconfined kastldratza/zoomrec-custom:latest
+```powershell
+docker run -d --name zoomrec `
+  --platform linux/amd64 `
+  --security-opt seccomp=unconfined `
+  --cap-add SYS_ADMIN --cap-add NET_ADMIN `
+  -e TZ=Asia/Seoul `
+  -e ZOOM_URL="https://zoom.us/j/123?pwd=XXX" `
+  -v ${PWD}/recordings:/home/zoomrec/recordings `
+  -p 5901:5901 `
+  zoomrec:latest
 ```
 
----
+### Windows / cmd
 
-## Supported actions
-
-- [x] Show when the next meeting starts
-- [x] _Join a Meeting_ from csv with id and password
-- [x] Wrong error: _Invalid meeting ID_ / **Leave**
-- [x] _Join with Computer Audio_
-- [x] _Please wait for the host to start this meeting._
-- [x] _Please wait, the meeting host will let you in soon._
-- [x] _Enter Full Screen_
-- [x] Switch to _Speaker View_
-- [x] Continuously check: _This meeting is being recorded_ / **Continue**
-- [x] Continuously check: _Hide Video Panel_
-- [x] Continuously check: _This meeting has been ended by host_
-- [x] Quit ffmpeg gracefully on abort
-- [x] _Host is sharing poll results_
-- [x] _This meeting is for authorized attendees only_ / **Leave meeting**
-- [x] Play sound after joining a meeting
-- [x] _Join a Meeting_ from csv with url
-
----
-
-## Roadmap
-
-- [ ] Refactoring
-- [ ] Create terraform stack to deploy in AWS
-- [ ] _Join a Meeting_ from calendar
-- [ ] _Sign In_ to existing Zoom account
-- [ ] _Join Breakout Room_
-- [ ] Support to record Google Meet, MS Teams, Cisco WebEx calls too
-- [ ] Ability to monitor recordings sessions in various containers
-
----
-
-## Testing
-
-Create unittests for different use cases:
-
-- [ ] Join meeting
-- [ ] Start / Stop ffmpeg and check if file was created
-- [ ] ...
-
----
-
-## Support
-
-Feel free. However, if you want to support me and my work, I have some crypto addresses here.
-
-name | address |
------------- | ------------- |
-Bitcoin (BTC) | <details><summary>show</summary><p><img src="doc/support/bitcoin.png" width="150" /> <br> ```bc1qz2n26d4gq8qjdge9ueeluqut5p0rmv5wjmvnus``` </p></details>
-Ethereum (ETH) | <details><summary>show</summary><p><img src="doc/support/ethereum.png" width="150" /> <br> ```0x984dBf7fb4ab489E33ca004552259484041AeF88``` </p></details>
-Dogecoin (DOGE) | <details><summary>show</summary><p><img src="doc/support/dogecoin.png" width="150" /> <br> ```DHBCESbBPqER83h5E2j6cw6H1QZW8qHtYd``` </p></details>
-Cardano (ADA) | <details><summary>show</summary><p><img src="doc/support/cardano.png" width="150" /> <br> ```addr1q90phcf0qzkx9da8vghtaa04a68gwpat37gvss963r9xfsj7r0sj7q9vv2m6wc3whm6ltm5wsur6hrusepqt4zx2vnpqz307az``` </p></details>
+```cmd
+docker run -d --name zoomrec ^
+  --platform linux/amd64 ^
+  --security-opt seccomp=unconfined ^
+  --cap-add SYS_ADMIN --cap-add NET_ADMIN ^
+  -e TZ=Asia/Seoul ^
+  -e ZOOM_URL="https://zoom.us/j/123?pwd=XXX" ^
+  -v %cd%\recordings:/home/zoomrec/recordings ^
+  -p 5901:5901 ^
+  zoomrec:latest
+```
 
 ---
 

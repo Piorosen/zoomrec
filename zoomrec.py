@@ -95,6 +95,14 @@ def build_zoommtg_url(meet_id, meet_pwd='', uname=''):
     return url
 
 
+def build_zoom_https_url(meet_id, meet_pwd=''):
+    """Build an https:// Zoom URL."""
+    url = f"https://zoom.us/j/{meet_id}"
+    if meet_pwd:
+        url += f"?pwd={meet_pwd}"
+    return url
+
+
 class BackgroundThread:
 
     def __init__(self, interval=10):
@@ -156,6 +164,8 @@ def exit_process_by_name(name):
             except Exception as ex:
                 logging.error("Could not terminate %s[%d]: %s",
                               name, elem['pid'], str(ex))
+    # Also kill by exact path to catch all Zoom child processes
+    subprocess.run("pkill -9 -f '/opt/zoom/' 2>/dev/null", shell=True, capture_output=True)
 
 
 def wait_for_zoom_process(timeout=60):
@@ -283,9 +293,9 @@ def dismiss_dialogs():
     time.sleep(1)
 
 
-def join(meet_id, meet_pw, duration, description, extra_time=300):
-    """Join a Zoom meeting using zoommtg:// URL and record it.
-    extra_time: buffer seconds added after duration (0 for ENV mode, 300 for CSV mode).
+def join(meet_id, meet_pw, duration, description, extra_time=300, original_url=''):
+    """Join a Zoom meeting and record it.
+    original_url: if provided, use this URL directly instead of building one.
     """
     global ONGOING_MEETING
     ffmpeg_debug = None
@@ -297,43 +307,40 @@ def join(meet_id, meet_pw, duration, description, extra_time=300):
         if not os.path.exists(DEBUG_PATH):
             os.makedirs(DEBUG_PATH, exist_ok=True)
 
-    # Exit any running Zoom
-    exit_process_by_name("zoom")
-    time.sleep(2)
-
-    # Hide Xfce taskbar before Zoom starts
+    # Hide Xfce taskbar
     hide_taskbar()
 
-    # Build zoommtg URL and launch Zoom
-    zoommtg_url = build_zoommtg_url(meet_id, meet_pw, DISPLAY_NAME)
-    logging.info("Launching Zoom with URL: %s", zoommtg_url)
+    zoom_url = original_url if original_url else build_zoom_https_url(meet_id, meet_pw)
+    logging.info("Zoom URL: %s", zoom_url)
 
-    zoom = subprocess.Popen(
-        f'zoom "--url={zoommtg_url}"',
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        shell=True, preexec_fn=os.setsid
-    )
+    # Launch Zoom with URL using setsid (new session required for Zoom v7)
+    logging.info("Launching Zoom with URL...")
+    os.system(f'DISPLAY=:1 setsid zoom "--url={zoom_url}" &')
 
-    # Wait for Zoom process
     if not wait_for_zoom_process(timeout=30):
-        logging.error("Zoom process did not start!")
-        send_telegram_message(f"Failed to start Zoom for meeting {description}!")
+        logging.error("Zoom did not start!")
+        send_telegram_message(f"Failed to start Zoom for {description}!")
         return
 
-    logging.info("Zoom process started, waiting for connection...")
+    logging.info("Zoom started, entering name...")
+    time.sleep(15)
 
-    # Give Zoom time to connect (auto-join config skips preview)
-    time.sleep(30)
+    for char in DISPLAY_NAME:
+        run_xdotool(f"key {char}")
+        time.sleep(0.1)
+    time.sleep(1)
+    run_xdotool("key Return")
 
-    # Dismiss popups (AI Companion, transcription, etc.)
-    dismiss_dialogs()
+    logging.info("Waiting for meeting connection...")
+    time.sleep(25)
 
-    # Force Zoom into fullscreen
     zoom_fullscreen()
-
-    # Dismiss any remaining popups after fullscreen
     time.sleep(2)
     dismiss_dialogs()
+    time.sleep(2)
+    dismiss_dialogs()
+    run_xdotool("mousemove 0 0")
+    time.sleep(3)
 
     start_date = datetime.now()
 
@@ -343,18 +350,25 @@ def join(meet_id, meet_pw, duration, description, extra_time=300):
     logging.info("Joined meeting, starting recording..")
 
     # Start FFmpeg recording
-    width, height = os.getenv('VNC_RESOLUTION', '1024x576').split('x')
-    resolution = f"{width}x{height}"
+    width, height = [int(x) for x in os.getenv('VNC_RESOLUTION', '1920x1080').split('x')]
     disp = os.getenv('DISPLAY', ':1')
     filename = os.path.join(
         REC_PATH,
         time.strftime(TIME_FORMAT) + "-" + description + ".mp4"
     )
 
+    # Crop out Zoom UI chrome: top title bar (~30px) and bottom toolbar (~56px)
+    crop_top = 30
+    crop_bottom = 56
+    crop_h = height - crop_top - crop_bottom
+    # H.264 requires even dimensions
+    crop_h = crop_h - (crop_h % 2)
+
     command = (
         f"ffmpeg -nostats -loglevel error "
         f"-f pulse -ac 2 -i 1 "
-        f"-f x11grab -r 30 -s {resolution} -i {disp} "
+        f"-f x11grab -r 30 -s {width}x{height} -i {disp} "
+        f"-vf crop={width}:{crop_h}:0:{crop_top} "
         f"-acodec aac -b:a 128k -vcodec libx264 "
         f"-preset ultrafast -crf 23 -pix_fmt yuv420p -threads 0 "
         f"-async 1 -vsync 1 {filename}"
@@ -435,10 +449,14 @@ def join_from_env():
     duration = ENV_RECORD_DURATION * 60  # convert minutes to seconds
     description = "ENV_Meeting_" + meet_id
 
+    # Pass original URL for direct use (preserves regional subdomain)
+    orig_url = ZOOM_URL if ZOOM_URL and ZOOM_URL.startswith('http') else ''
+
     logging.info("Joining meeting from ENV: ID=%s, Duration=%d min",
                  meet_id, ENV_RECORD_DURATION)
     join(meet_id=meet_id, meet_pw=meet_pwd,
-         duration=duration, description=description, extra_time=0)
+         duration=duration, description=description,
+         extra_time=0, original_url=orig_url)
 
 
 def join_ongoing_meeting():
