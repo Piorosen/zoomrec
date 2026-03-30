@@ -397,16 +397,14 @@ def join(meet_id, meet_pw, duration, description, extra_time=300, original_url='
     logging.info("Meeting ended at %s", datetime.now())
     logging.info("Recording saved: %s", filename)
 
-    # Stop recording and Zoom
+    # Stop recording
     try:
         os.killpg(os.getpgid(ffmpeg.pid), signal.SIGQUIT)
         atexit.unregister(os.killpg)
     except Exception:
         pass
-    try:
-        os.killpg(os.getpgid(zoom.pid), signal.SIGQUIT)
-    except Exception:
-        pass
+    # Stop Zoom
+    exit_process_by_name("zoom")
 
     send_telegram_message(f"Meeting '{description}' ended.")
 
